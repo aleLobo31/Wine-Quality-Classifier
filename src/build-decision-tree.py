@@ -2,19 +2,22 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from pathlib import Path
 from sklearn.model_selection import train_test_split
+from sklearn_genetic import GASearchCV
+from sklearn_genetic.space import Categorical, Integer
 from sklearn.tree import DecisionTreeClassifier, plot_tree
 from sklearn.metrics import classification_report, confusion_matrix, ConfusionMatrixDisplay
 
+# Definimos variables globales de interés 
 BASE_DIR = Path(__file__).resolve().parent.parent
 PROCESSED_DATA_PATH = BASE_DIR / "data" / "processed" / "CleanWineQT.csv"
-
-labels = {
+MODEL_PATH = BASE_DIR / "models"
+LABELS = {
     "Low": 0,
     "Medium": 1,
     "High": 2
 }
 
-def main():
+def create_training_testing_data() -> list:
     # Importamos el Dataset Limpio
     df = pd.read_csv(PROCESSED_DATA_PATH)
 
@@ -23,67 +26,101 @@ def main():
     X = df.drop(columns=["quality_label"])
 
     # Hacemos el encoding de la variable objetivo
-    y_encoded = y.map(labels)
-    print(y_encoded)
+    y_encoded = y.map(LABELS)
 
     # Separamos el conjunto de Test del conjunto de Entrenamiento
-    X_train, X_test, y_train, y_test = train_test_split(
+    return train_test_split(
         X, 
         y_encoded,
         test_size=0.2,
         random_state=42,
         stratify=y_encoded # Uso stratify para que en ambos conjuntos haya un 3% de baja calidad
-        ) 
+        )
 
-    # Creamos el modelo basado en un Árbol de Decisión
-    clf_tree = DecisionTreeClassifier(
-        max_depth=4, # Para que las decisiones tengan sentido necesitamos que el árbol no pueda ser muy profundo
-        class_weight='balanced', # Necesario para la clase minoritaria
-        random_state=42
+def create_model(random_state=42) -> DecisionTreeClassifier:
+    return DecisionTreeClassifier(random_state=random_state)
+
+def train_model(model: DecisionTreeClassifier, X_train: list, y_train: list) -> GASearchCV:
+    # Definimos el ADN del árbol
+    tree_adn = {
+        'max_depth': Integer(2, 10), # Profundidad del árbol
+        'criterion': Categorical(['gini', 'entropy']), # Como se crean nuevas ramas
+        'min_samples_split': Integer(2, 20), # Mínimo de muestras para dividir el árbol (evitar overfitting)
+        'min_samples_leaf': Integer(1, 10), # Minimo de muestras por hoja (evitar overfitting)
+        'class_weight': Categorical(['balanced', None]) # Usar pesos balanceados o no
+    }
+
+    # Creamos el experimento evolutivo
+    evolved_tree = GASearchCV(
+        estimator=model,
+        cv=3,                        # Validación cruzada (3 exámenes por individuo)
+        scoring='f1_macro',          # F1 Macro es nuestra fitness function
+        population_size=15,          # 15 Árboles compitiendo en cada generación
+        generations=10,              # 10 Rondas de evolución
+        tournament_size=3,           # 3 Árboles se pelean para reproducirse
+        elitism=True,                # El mejor árbol siempre sobrevive intacto
+        crossover_probability=0.8,   # 80% de probabilidad de mezclar padres
+        mutation_probability=0.1,    # 10% de probabilidad de mutación aleatoria
+        param_grid=tree_adn,         # 'Genoma' de nuestro árbol
+        criteria='max',              # Queremos MAXIMIZAR el F1-Score
+        n_jobs=-1,                   # Usa todos los núcleos de la CPU
+        verbose=True
     )
 
     # Entrenamos el modelo con el conjunto de entrenamiento
-    clf_tree.fit(X_train, y_train)
+    evolved_tree.fit(X_train, y_train)
 
-    # Visualizamos el árbol creado
-    plt.figure(figsize=(24, 12))
-    plot_tree(
-        clf_tree,
-        feature_names=X.columns,
-        class_names=['Low', 'Medium', 'High'],
-        filled=True, # Colorea los nodos según la clase dominante
-        rounded=True,   
-        fontsize=11
-    )
-    plt.title("Árbol de Decisión: Reglas de Calidad del Vino", fontsize=20)
-    plt.show()
+    # Mostramos por consola los resultados del proceso de evolución
+    print("\n--- EL ÁRBOL GANADOR ---")
+    print("Mejores Genes encontrados:", evolved_tree.best_params_)
+    print(f"Mejor F1-Macro durante el entrenamiento: {evolved_tree.best_score_:.4f}")
 
-    # Predecimos con el conjunto de Test
-    y_pred = clf_tree.predict(X_test)
-                                    
-    # Comprobamos la matriz de confusión
-    fig, ax = plt.subplots(figsize=(8, 6))
-    cm_display = ConfusionMatrixDisplay.from_predictions(
-        y_test, 
-        y_pred, 
-        display_labels=['Low', 'Medium', 'High'],
-        cmap='Blues',
-        colorbar=False,
-        ax=ax
-    )
-    plt.title("Matriz de Confusión (Datos de Test)", fontsize=16)
-    plt.show()
+    # Dibujamos el árbol
+    plot_best_tree(evolved_tree, X_train)
 
-    # Vemos métricas f1-score y de recall para analizar el comportamiento del modelo
+    return evolved_tree
+
+def evaluate_model(model: DecisionTreeClassifier, X_train: list, y_train:list, X_test: list, y_test: list) -> None:
+    # Predecimos las categorías usando el mejor árbol
+    y_pred_test = model.predict(X_test)
+    y_pred_train = model.predict(X_train)
+
+    # Imprimimos las métricas asociadas a la Matriz de Confusión para evaluar el modelo
+    print("\n--- REPORTE DE CLASIFICACIÓN (TRAIN) ---")
+    print(classification_report(y_train, y_pred_train, target_names=['Low', 'Medium', 'High']))
     print("\n--- REPORTE DE CLASIFICACIÓN (TEST) ---")
-    print(classification_report(y_test, y_pred, target_names=['Low', 'Medium', 'High']))
+    print(classification_report(y_test, y_pred_test, target_names=['Low', 'Medium', 'High']))
 
-    # Comprobamos si hay overfitting en los datos
-    print("-" * 30)
-    print("Chequeo Rápido de Overfitting:")
-    print(f"Accuracy en Train: {clf_tree.score(X_train, y_train):.4f}")
-    print(f"Accuracy en Test:  {clf_tree.score(X_test, y_test):.4f}")
+    return None
 
+def plot_best_tree(best_tree: GASearchCV, X_train: list) -> None:
+    print("Generando imagen del árbol... (Puede tardar unos segundos si es muy grande)")
+    plt.figure(figsize=(35, 15)) 
+    plot_tree(
+        best_tree.best_estimator_,
+        feature_names=X_train.columns,      # Pone nombres químicos en vez de "X[0]"
+        class_names=['Low', 'Medium', 'High'], # Pone nombres de clases en vez de "0, 1, 2"
+        filled=True,                        # Colorea las cajas según la clase dominante
+        rounded=True,                       # Bordes suaves (estética)
+        fontsize=10,                        # Tamaño de letra (ajusta si se ve pequeño)
+        proportion=True,                    # El tamaño de la caja indica cuántos vinos caen ahí
+        precision=2                         # Decimales en los umbrales
+    )
+    plt.title(f"El Árbol Evolucionado (F1-Macro: {best_tree.best_score_:.2f})", fontsize=20)
+    plt.show()
+
+def main():
+    # Preparamos los datos
+    X_train, X_test, y_train, y_test = create_training_testing_data()
+
+    # Creamos el modelo basado en un Árbol de Decisión
+    clf_tree = create_model()
+
+    # Entrenamos el modelo
+    evolved_tree = train_model(clf_tree, X_train, y_train)
+    
+    # Evaluamos el modelo
+    evaluate_model(evolved_tree.best_estimator_, X_train, y_train, X_test, y_test)
     
 if __name__ == "__main__":
     main()
