@@ -6,6 +6,8 @@ from sklearn_genetic import GASearchCV
 from sklearn_genetic.space import Categorical, Integer
 from sklearn.tree import DecisionTreeClassifier, plot_tree
 from sklearn.metrics import classification_report, confusion_matrix, ConfusionMatrixDisplay
+from imblearn.over_sampling import SMOTE
+from collections import Counter
 
 # Definimos variables globales de interés 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -17,7 +19,7 @@ LABELS = {
     "High": 2
 }
 
-def create_training_testing_data() -> list:
+def create_training_testing_data(use_smote: bool=True) -> list:
     # Importamos el Dataset Limpio
     df = pd.read_csv(PROCESSED_DATA_PATH)
 
@@ -29,13 +31,23 @@ def create_training_testing_data() -> list:
     y_encoded = y.map(LABELS)
 
     # Separamos el conjunto de Test del conjunto de Entrenamiento
-    return train_test_split(
+    X_train, X_test, y_train, y_test = train_test_split(
         X, 
         y_encoded,
-        test_size=0.2,
+        test_size=0.3,
         random_state=42,
         stratify=y_encoded # Uso stratify para que en ambos conjuntos haya un 3% de baja calidad
         )
+    
+    # Aplicamos SMOTE para balancear las muestras de cada clase en el conjunto de entrenamiento
+    if(use_smote):
+        smote = SMOTE(random_state=42)
+        print(f"Antes de SMOTE: {Counter(y_train)}")
+
+        X_train, y_train = smote.fit_resample(X_train, y_train)
+        print(f"Después de SMOTE: {Counter(y_train)}")
+
+    return X_train, X_test, y_train, y_test
 
 def create_model(random_state=42) -> DecisionTreeClassifier:
     return DecisionTreeClassifier(random_state=random_state)
@@ -43,10 +55,10 @@ def create_model(random_state=42) -> DecisionTreeClassifier:
 def train_model(model: DecisionTreeClassifier, X_train: list, y_train: list) -> GASearchCV:
     # Definimos el ADN del árbol
     tree_adn = {
-        'max_depth': Integer(2, 10), # Profundidad del árbol
+        'max_depth': Integer(2, 100), # Profundidad del árbol
         'criterion': Categorical(['gini', 'entropy']), # Como se crean nuevas ramas
-        'min_samples_split': Integer(2, 20), # Mínimo de muestras para dividir el árbol (evitar overfitting)
-        'min_samples_leaf': Integer(1, 10), # Minimo de muestras por hoja (evitar overfitting)
+        'min_samples_split': Integer(10, 20), # Mínimo de muestras para dividir el árbol (evitar overfitting)
+        'min_samples_leaf': Integer(5, 10), # Minimo de muestras por hoja (evitar overfitting)
         'class_weight': Categorical(['balanced', None]) # Usar pesos balanceados o no
     }
 
@@ -55,9 +67,9 @@ def train_model(model: DecisionTreeClassifier, X_train: list, y_train: list) -> 
         estimator=model,
         cv=3,                        # Validación cruzada (3 exámenes por individuo)
         scoring='f1_macro',          # F1 Macro es nuestra fitness function
-        population_size=15,          # 15 Árboles compitiendo en cada generación
+        population_size=32,          # 15 Árboles compitiendo en cada generación
         generations=10,              # 10 Rondas de evolución
-        tournament_size=3,           # 3 Árboles se pelean para reproducirse
+        tournament_size=4,           # 3 Árboles se pelean para reproducirse
         elitism=True,                # El mejor árbol siempre sobrevive intacto
         crossover_probability=0.8,   # 80% de probabilidad de mezclar padres
         mutation_probability=0.1,    # 10% de probabilidad de mutación aleatoria
@@ -111,7 +123,7 @@ def plot_best_tree(best_tree: GASearchCV, X_train: list) -> None:
 
 def main():
     # Preparamos los datos
-    X_train, X_test, y_train, y_test = create_training_testing_data()
+    X_train, X_test, y_train, y_test = create_training_testing_data(use_smote=True)
 
     # Creamos el modelo basado en un Árbol de Decisión
     clf_tree = create_model()
@@ -121,6 +133,8 @@ def main():
     
     # Evaluamos el modelo
     evaluate_model(evolved_tree.best_estimator_, X_train, y_train, X_test, y_test)
+
+    #TODO: Guardar el modelo
     
 if __name__ == "__main__":
     main()

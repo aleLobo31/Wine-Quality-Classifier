@@ -6,6 +6,8 @@ from sklearn.preprocessing import RobustScaler
 from sklearn.model_selection import train_test_split
 from sklearn.utils import class_weight
 from sklearn.metrics import classification_report
+from imblearn.over_sampling import SMOTE
+from collections import Counter
 
 # Defino variables globales de interés
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -17,7 +19,7 @@ LABELS = {
     "High": 2
 }
 
-def create_training_testing_data() -> list:
+def create_training_testing_data(use_smote=True) -> list:
     # Importamos los datos limpios
     df = pd.read_csv(PROCESSED_DATA_PATH)
 
@@ -32,7 +34,7 @@ def create_training_testing_data() -> list:
     X_train, X_test, y_train, y_test = train_test_split(
         X, 
         y_encoded, 
-        test_size=0.2,
+        test_size=0.3,
         random_state=42,
         stratify=y_encoded
     )
@@ -43,6 +45,14 @@ def create_training_testing_data() -> list:
     # Aplicamos un escalado para hacer más robusto el aprendizaje de la NN
     X_train_scaled = rscaler.fit_transform(X_train)
     X_test_scaled = rscaler.transform(X_test)
+
+    # Aplicamos SMOTE para balancear las muestras de cada clase en el conjunto de entrenamiento
+    if(use_smote):
+        smote = SMOTE(random_state=42)
+        print(f"Antes de SMOTE: {Counter(y_train)}")
+
+        X_train_scaled, y_train = smote.fit_resample(X_train_scaled, y_train)
+        print(f"Después de SMOTE: {Counter(y_train)}")
 
     return X_train_scaled, X_test_scaled, y_train, y_test
 
@@ -130,6 +140,8 @@ def main():
 
     # Evaluamos el modelo
     evaluate_model(clf_nn, X_train, y_train, X_test, y_test)
+
+    #TODO: Guardar el modelo
 
 if __name__ == "__main__":
     main()
