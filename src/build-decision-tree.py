@@ -55,7 +55,7 @@ def create_model(random_state=42) -> DecisionTreeClassifier:
 def train_model(model: DecisionTreeClassifier, X_train: list, y_train: list) -> GASearchCV:
     # Definimos el ADN del árbol
     tree_adn = {
-        'max_depth': Integer(2, 100), # Profundidad del árbol
+        'max_depth': Integer(2, 10), # Profundidad del árbol
         'criterion': Categorical(['gini', 'entropy']), # Como se crean nuevas ramas
         'min_samples_split': Integer(10, 20), # Mínimo de muestras para dividir el árbol (evitar overfitting)
         'min_samples_leaf': Integer(5, 10), # Minimo de muestras por hoja (evitar overfitting)
