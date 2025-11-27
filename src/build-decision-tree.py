@@ -1,3 +1,4 @@
+import joblib
 import pandas as pd
 import matplotlib.pyplot as plt
 from pathlib import Path
@@ -134,7 +135,9 @@ def main():
     # Evaluamos el modelo
     evaluate_model(evolved_tree.best_estimator_, X_train, y_train, X_test, y_test)
 
-    #TODO: Guardar el modelo
-    
+    # Guardamos el modelo entrenado
+    model_path = MODEL_PATH / "dtree-wine-clf.pkl"
+    joblib.dump(evolved_tree.best_estimator_, model_path)
+
 if __name__ == "__main__":
     main()
