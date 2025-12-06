@@ -22,7 +22,7 @@ LABELS = {
     "Medium": 1,
     "High": 2
 }
-OPTIMIZE_WITH_AG = True
+OPTIMIZE_WITH_AG = False
 
 def create_training_testing_data(use_smote: bool=True) -> list:
     # Importamos el Dataset Limpio
@@ -126,7 +126,7 @@ def train_model_gridsearch(model: DecisionTreeClassifier, X_train: list, y_train
     print(f"Mejor F1-Macro durante el entrenamiento: {searched_tree.best_score_:.4f}")
 
     # Dibujamos el árbol
-    # plot_best_tree(searched_tree, X_train)
+    plot_best_tree(searched_tree, X_train)
 
     return searched_tree
 
@@ -157,14 +157,22 @@ def evaluate_model(model: DecisionTreeClassifier, X_train: list, y_train:list, X
 
     return macroF1Score
 
-def plot_best_tree(best_tree: GASearchCV, X_train: list) -> None:
+def plot_best_tree(best_tree: GASearchCV, X_train: list, max_depth: int = 2) -> None:
+    """
+    Dibuja el árbol de decisión con opciones de visualización simplificada.
+    
+    Args:
+        best_tree: Modelo entrenado
+        X_train: Datos de entrenamiento (para obtener nombres de características)
+        max_depth: Profundidad máxima a mostrar (None = árbol completo, 2-3 recomendado)
+    """
     print("\nGenerando imagen del árbol... (Puede tardar unos segundos si es muy grande)")
     
-    # Calculamos dinámicamente el tamaño de la imagen en base a la profundidad del árbol
-    tree_depth = best_tree.best_estimator_.get_depth()
-    fig_width = max(40, tree_depth * 16)
-    fig_height = max(20, tree_depth * 16)
-    font_size = max(8, 12 - tree_depth)
+    # Calculamos dinámicamente el tamaño de la imagen
+    tree_depth = max_depth if max_depth else best_tree.best_estimator_.get_depth()
+    fig_width = max(24, tree_depth * 12)
+    fig_height = max(14, tree_depth * 8)
+    font_size = max(11, 16 - tree_depth * 2)
 
     # Creamos la imagen con las dimensiones indicadas
     plt.figure(figsize=(fig_width, fig_height)) 
@@ -172,6 +180,7 @@ def plot_best_tree(best_tree: GASearchCV, X_train: list) -> None:
     # Dibujamos el árbol
     plot_tree(
         best_tree.best_estimator_,
+        max_depth=max_depth,                   # Limita la profundidad mostrada
         feature_names=X_train.columns,         # Pone nombres químicos en vez de "X[0]"
         class_names=['Low', 'Medium', 'High'], # Pone nombres de clases en vez de "0, 1, 2"
         filled=True,                           # Colorea las cajas según la clase dominante
@@ -180,7 +189,11 @@ def plot_best_tree(best_tree: GASearchCV, X_train: list) -> None:
         proportion=True,                       # El tamaño de la caja indica cuántos vinos caen ahí
         precision=2                            # Decimales en los umbrales
     )
-    plt.title(f"\nEl Árbol Evolucionado (F1-Macro: {best_tree.best_score_:.2f})", fontsize=20)
+    
+    depth_info = f"(primeros {max_depth} niveles)" if max_depth else "(árbol completo)"
+    plt.title(f"\nÁrbol de Decisión {depth_info}\nF1-Macro: {best_tree.best_score_:.2f}", 
+              fontsize=16, fontweight='bold')
+    plt.tight_layout()
     plt.show()
     return None
 
