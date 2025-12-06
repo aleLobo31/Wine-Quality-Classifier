@@ -10,9 +10,9 @@ from sklearn.tree import DecisionTreeClassifier, plot_tree
 from sklearn.metrics import classification_report, confusion_matrix, ConfusionMatrixDisplay, f1_score, roc_curve, auc, make_scorer
 from sklearn.preprocessing import label_binarize
 from imblearn.over_sampling import SMOTE
+from imblearn.combine import SMOTETomek
 from collections import Counter
 from itertools import cycle
-
 # Definimos variables globales de interés 
 BASE_DIR = Path(__file__).resolve().parent.parent
 PROCESSED_DATA_PATH = BASE_DIR / "data" / "processed" / "CleanWineQT.csv"
@@ -22,7 +22,7 @@ LABELS = {
     "Medium": 1,
     "High": 2
 }
-OPTIMIZE_WITH_AG = False
+OPTIMIZE_WITH_AG = True
 
 def create_training_testing_data(use_smote: bool=True) -> list:
     # Importamos el Dataset Limpio
@@ -62,8 +62,9 @@ def train_model_GAsearch(model: DecisionTreeClassifier, X_train: list, y_train: 
     tree_adn = {
         'max_depth': Integer(3, 6), # Profundidad del árbol
         'criterion': Categorical(['gini', 'entropy']), # Como se crean nuevas ramas
-        'min_samples_split': Integer(20, 40), # Mínimo de muestras para dividir el árbol (evitar overfitting)
-        'min_samples_leaf': Integer(10, 25) # Minimo de muestras por hoja (evitar overfitting)
+        'min_samples_split': Integer(10, 30), # Mínimo de muestras para dividir el árbol (evitar overfitting)
+        'min_samples_leaf': Integer(5, 20), # Minimo de muestras por hoja (evitar overfitting)
+        'class_weight': Categorical(['balanced']) # Peso de las clases para el desbalanceo
     }
 
     # Creamos el experimento evolutivo
@@ -80,7 +81,7 @@ def train_model_GAsearch(model: DecisionTreeClassifier, X_train: list, y_train: 
         param_grid=tree_adn,         # 'Genoma' de nuestro árbol
         criteria='max',              # Queremos MAXIMIZAR el F1-Score
         n_jobs=-1,                   # Paralelizar entrenamiento
-        verbose=True
+        verbose=False
     )
 
     # Entrenamos el modelo con el conjunto de entrenamiento
@@ -92,7 +93,7 @@ def train_model_GAsearch(model: DecisionTreeClassifier, X_train: list, y_train: 
     print(f"Mejor F1-Macro durante el entrenamiento: {evolved_tree.best_score_:.4f}")
 
     # Dibujamos el árbol
-    plot_best_tree(evolved_tree, X_train)
+    # plot_best_tree(evolved_tree, X_train)
 
     return evolved_tree
 
@@ -113,7 +114,7 @@ def train_model_gridsearch(model: DecisionTreeClassifier, X_train: list, y_train
         cv=3, # Cross-validation folds
         scoring='f1_macro', # Valor objetivo f1_macro make_scorer(f1_low_scorer)
         n_jobs=-1, # Opción para parelelizar
-        verbose=2 # Mostrar progreso
+        verbose=0 # Mostrar progreso
     )
 
     # Entrenamos el modelo
@@ -125,7 +126,7 @@ def train_model_gridsearch(model: DecisionTreeClassifier, X_train: list, y_train
     print(f"Mejor F1-Macro durante el entrenamiento: {searched_tree.best_score_:.4f}")
 
     # Dibujamos el árbol
-    plot_best_tree(searched_tree, X_train)
+    # plot_best_tree(searched_tree, X_train)
 
     return searched_tree
 
@@ -140,10 +141,21 @@ def evaluate_model(model: DecisionTreeClassifier, X_train: list, y_train:list, X
     print("\n--- REPORTE DE CLASIFICACIÓN (TEST) ---")
     print(classification_report(y_test, y_pred_test, target_names=['Low', 'Medium', 'High']))
 
-    # Dibujamos la curva ROC
-    plot_roc_curve(model, X_test, y_test)
+    # Imprimimos F1-Score overall
+    microF1Score = f1_score(y_test, y_pred_test, average='micro')
+    print('F1 Micro Score is : ', microF1Score)
+    
+    # Calculamos F1-Macro para devolverlo
+    macroF1Score = f1_score(y_test, y_pred_test, average='macro')
+    print('F1 Macro Score is : ', macroF1Score)
 
-    return None
+    # Dibujamos la matriz de confusión
+    # plot_confusion_matrix(y_test, y_pred_test)
+
+    # Dibujamos la curva ROC
+    # plot_roc_curve(model, X_test, y_test)
+
+    return macroF1Score
 
 def plot_best_tree(best_tree: GASearchCV, X_train: list) -> None:
     print("\nGenerando imagen del árbol... (Puede tardar unos segundos si es muy grande)")
@@ -189,30 +201,65 @@ def plot_roc_curve(model: DecisionTreeClassifier, X_test: list, y_test: list) ->
     fpr = dict()
     tpr = dict()
     roc_auc = dict()
+    thresholds_dict = dict()
+    best_threshold = dict()
+    youden_j = dict()
     
     for i in range(n_classes):
-        fpr[i], tpr[i], _ = roc_curve(y_test_bin[:, i], y_score[:, i])
+        fpr[i], tpr[i], thresholds_dict[i] = roc_curve(y_test_bin[:, i], y_score[:, i])
         roc_auc[i] = auc(fpr[i], tpr[i])
+        
+        # Calculamos el índice de Youden J para cada punto
+        j_scores = tpr[i] - fpr[i]
+        
+        # Encontramos el índice del mejor umbral (máximo Youden J)
+        best_idx = j_scores.argmax()
+        best_threshold[i] = thresholds_dict[i][best_idx]
+        youden_j[i] = j_scores[best_idx]
     
     # Calculamos la curva ROC micro-average (todas las clases juntas)
-    fpr["micro"], tpr["micro"], _ = roc_curve(y_test_bin.ravel(), y_score.ravel())
+    fpr["micro"], tpr["micro"], thresholds_micro = roc_curve(y_test_bin.ravel(), y_score.ravel())
     roc_auc["micro"] = auc(fpr["micro"], tpr["micro"])
+    
+    # Calculamos el mejor umbral para micro-average
+    j_scores_micro = tpr["micro"] - fpr["micro"]
+    best_idx_micro = j_scores_micro.argmax()
+    best_threshold["micro"] = thresholds_micro[best_idx_micro]
+    youden_j["micro"] = j_scores_micro[best_idx_micro]
+    
+    # Imprimimos los mejores umbrales por consola
+    print("\n--- MEJORES UMBRALES DE DECISIÓN (Youden J Index) ---")
+    class_names = ['Low', 'Medium', 'High']
+    for i, name in enumerate(class_names):
+        print(f"{name:8} → Umbral óptimo = {best_threshold[i]:.4f}, Youden J = {youden_j[i]:.4f}")
+    print(f"{'Micro-avg':8} → Umbral óptimo = {best_threshold['micro']:.4f}, Youden J = {youden_j['micro']:.4f}")
     
     # Dibujamos las curvas
     plt.figure(figsize=(10, 8))
     
     # Colores para cada clase
     colors = cycle(['#FF6B6B', '#4ECDC4', '#45B7D1'])
-    class_names = ['Low', 'Medium', 'High']
     
     # Dibujamos la curva para cada clase
     for i, color, name in zip(range(n_classes), colors, class_names):
         plt.plot(fpr[i], tpr[i], color=color, lw=2,
                 label=f'{name} (AUC = {roc_auc[i]:.3f})')
+        
+        # Marcamos el punto óptimo (mejor umbral según Youden J)
+        best_idx = (tpr[i] - fpr[i]).argmax()
+        plt.scatter(fpr[i][best_idx], tpr[i][best_idx], color=color, s=150, 
+                   marker='o', edgecolors='black', linewidths=2, zorder=5,
+                   label=f'{name} Umbral óptimo ({best_threshold[i]:.3f})')
     
     # Dibujamos la curva micro-average
     plt.plot(fpr["micro"], tpr["micro"], color='navy', lw=2, linestyle='--',
             label=f'Micro-average (AUC = {roc_auc["micro"]:.3f})')
+    
+    # Marcamos el punto óptimo para micro-average
+    best_idx_micro = (tpr["micro"] - fpr["micro"]).argmax()
+    plt.scatter(fpr["micro"][best_idx_micro], tpr["micro"][best_idx_micro], 
+               color='navy', s=150, marker='D', edgecolors='black', linewidths=2, zorder=5,
+               label=f'Micro-avg Umbral óptimo ({best_threshold["micro"]:.3f})')
     
     # Dibujamos la línea diagonal (clasificador aleatorio)
     plt.plot([0, 1], [0, 1], 'k--', lw=1, label='Clasificador Aleatorio (AUC = 0.50)')
@@ -236,8 +283,41 @@ def plot_roc_curve(model: DecisionTreeClassifier, X_test: list, y_test: list) ->
 
     return None
 
-def f1_low_scorer(y_true, y_pred):
-    return f1_score(y_true, y_pred, labels=[0], average='macro')
+def plot_confusion_matrix(y_test: list, y_pred: list) -> None:
+    """
+    Dibuja la matriz de confusión para el conjunto de test
+    """
+    print("\n--- MATRIZ DE CONFUSIÓN ---")
+    
+    # Calculamos la matriz de confusión
+    cm = confusion_matrix(y_test, y_pred)
+    
+    # Creamos el display de la matriz de confusión
+    fig, ax = plt.subplots(figsize=(8, 6))
+    disp = ConfusionMatrixDisplay(confusion_matrix=cm, 
+                                   display_labels=['Low', 'Medium', 'High'])
+    
+    # Dibujamos la matriz con un colormap personalizado
+    disp.plot(cmap='Blues', ax=ax, values_format='d')
+    
+    # Configuramos el título y etiquetas
+    plt.title('Matriz de Confusión - Desition Tree', fontsize=14, fontweight='bold', pad=20)
+    plt.xlabel('Clase Predicha', fontsize=12)
+    plt.ylabel('Clase Real', fontsize=12)
+    plt.tight_layout()
+    
+    plt.show()
+    
+    # Imprimimos información adicional
+    print("\nMatriz de confusión:")
+    print(cm)
+    print("\nInterpretación:")
+    print("- Diagonal principal: predicciones correctas")
+    print("- Fuera de la diagonal: errores de clasificación")
+    
+    return None
+
+
 def main():
     # Preparamos los datos
     X_train, X_test, y_train, y_test = create_training_testing_data(use_smote=False)
@@ -252,11 +332,13 @@ def main():
         best_tree = train_model_gridsearch(clf_tree, X_train, y_train)
     
     # Evaluamos el modelo
-    evaluate_model(best_tree.best_estimator_, X_train, y_train, X_test, y_test)
+    f1_macro = evaluate_model(best_tree.best_estimator_, X_train, y_train, X_test, y_test)
 
     # Guardamos el modelo entrenado
     model_path = MODEL_PATH / "dtree-wine-clf.pkl"
     joblib.dump(best_tree.best_estimator_, model_path)
+    
+    return f1_macro
 
 if __name__ == "__main__":
     main()
